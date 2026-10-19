@@ -521,7 +521,7 @@ async function pushRemote(){
   try{
     let server={v:1,votes:{},checks:{},updated:null};
     try{
-      const r=await fetch(MANTLE_URL,{cache:'no-store'});
+      const r=await fetch(MANTLE_URL,{cache:'no-store', headers:{'X-Mantle-Key':MANTLE_KEY}});
       if(r.ok){ const d=await r.json(); if(d&&typeof d==='object'&&!d.error) server=d; }
     }catch(_){}
     remote = mergeDocs(server, remote);
