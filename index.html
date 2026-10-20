@@ -127,15 +127,7 @@ table.ag th{background:#ecfdf5;color:#065f46;font-size:.72rem;text-transform:upp
 </header>
 
 
-<div class="who-bar" id="who-bar">
-  <label for="name-a">Nombre 1</label>
-  <input id="name-a" maxlength="24" placeholder="p. ej. Alex" autocomplete="nickname"/>
-  <label for="name-b">Nombre 2</label>
-  <input id="name-b" maxlength="24" placeholder="p. ej. María" autocomplete="nickname"/>
-  <label for="who-sel">¿Quién eres?</label>
-  <select id="who-sel"><option value="">— elige —</option></select>
-  <span class="sync wait" id="sync-status">Sincronizando…</span>
-</div>
+<div class="who-bar" id="who-bar"><span style="font-size:.8rem;color:var(--muted)">Valoración compartida: lo que votéis los dos se ve en ambos móviles.</span><span class="sync wait" id="sync-status">Sincronizando…</span></div>
 
 <nav class="tabs" id="tabs">
   <button class="tab active" data-panel="pisos">Pisos</button>
@@ -200,7 +192,7 @@ table.ag th{background:#ecfdf5;color:#065f46;font-size:.72rem;text-transform:upp
 
 <div class="footer-bar">
   <button class="btn secondary sm" id="btn-export">📋 Exportar decisiones</button>
-  <button class="btn ghost sm" id="btn-reset" title="Borrar votos y comentarios locales">Reset local</button>
+  <button class="btn ghost sm" id="btn-reset" title="Borrar la caché local">Reset local</button>
 </div>
 <div class="toast" id="toast"></div>
 
@@ -209,27 +201,50 @@ const LISTINGS = [{"id": "s1", "cat": "short", "title": "Piso, C/ Stmo. Cristo d
 const AGENCIES = [["Jara Rentails y Gestión Inmobiliaria", "Especializada en alquiler de temporada", "856 243 159 / 665 063 010", "info@jarainmobiliaria.es", "https://www.jarainmobiliaria.es/contactar"], ["RentaLuz Inmobiliaria", "Avda. Nazaret 3, Urb. El Retiro", "661 622 172", "rentaluz@rentaluzinmobiliaria.com", ""], ["QUO Homes", "Av. Descartes 2 / Rotonda Hipercor", "956 900 363", "agencia@quohomes.com", ""], ["5As Profesionales", "Paseo Delicias 3, local 14 (alquiler de temporada)", "670 488 362", "info@5as.es", ""], ["Fenizia Protección de Alquiler", "Teléfono del anuncio de Fotocasa", "+34 646 047 021", "", ""], ["Zazume", "Teléfono del anuncio", "+34 919 492 132", "", ""], ["INMOAKTUA 2.0 SL", "", "+34 611 856 356", "", ""], ["Sin teléfono verificado", "Tradicasa Jerez, Inmobiliaria Cambas, Chapín Gestión, Grupo Inmobiliario Se Vende, Alegra Homes", "", "", ""]];
 const PENDIENTES = ["Preguntar a Fenizia si aceptan contrato de 2 meses (1 nov–1 ene) y si el yorkshire de 2 kg está OK (ya dice «se aceptan mascotas»).", "Confirmar con Jara Rentails (J1221, J0822) si admiten perro pequeño y el importe de honorarios de gestión.", "Preguntar a QUO Homes (QH6054) si es temporada y si admiten mascotas.", "Preguntar a RentaLuz (Pozo del Olivar) si es temporada y mascotas.", "Preguntar a INMOAKTUA (Castellanos) temporada + mascotas + honorarios.", "Contactar 5As Profesionales (670 488 362) por ofertas de temporada.", "Negociar con Jara J1526 si bajan de 1.000 €/mes o clarifican extras.", "Confirmar distancias reales andando (Torcal y estación) visitando o midiendo en Maps.", "Preguntar a Kelify/Enalquiler si aceptan 2 meses (nov–dic) fuera del curso escolar.", "Buscar grupos de Facebook/WhatsApp «Alquiler Jerez» (la búsqueda web no devolvió ninguno).", "Revisar Idealista/Milanuncios con navegador (curl bloqueado)."];
 
-const STORE_KEY = 'jerez-alquiler-v1';
-const NAMES_KEY = 'jerez-names-v1';
+const STORE_KEY = 'jerez-alquiler-v2';
+const OLD_STORE_KEY = 'jerez-alquiler-v1';
 const MANTLE_NS = "casa-jerez-67fa2129ef27";
 const MANTLE_KEY = "91dc726c946b12178f534082141c7438700406cd46962026443abb2f82e5bf46";
-const MANTLE_URL = 'https://mantledb.sh/v2/' + MANTLE_NS + '/state';
+const MANTLE_URL = 'https://mantledb.sh/v2/' + MANTLE_NS + '/state2';
 const TARGET = new Date('2026-11-01T00:00:00');
 const POLL_MS = 20000;
 
-function loadLocal(){
-  try{ return JSON.parse(localStorage.getItem(STORE_KEY)||'{}'); }catch(e){ return {}; }
-}
-function saveLocal(s){ localStorage.setItem(STORE_KEY, JSON.stringify(s)); }
-function loadNames(){
-  try{ return JSON.parse(localStorage.getItem(NAMES_KEY)||'{}'); }catch(e){ return {}; }
-}
-function saveNames(n){ localStorage.setItem(NAMES_KEY, JSON.stringify(n)); }
+/* Documento compartido (v2): una valoración por anuncio
+   { v:2, votes:{ id:{vote,stars,comment,updated} }, checks:{ i:{done,updated} }, updated } */
+function emptyDoc(){ return {v:2, votes:{}, checks:{}, updated:null}; }
+function ts(x){ return Date.parse((x&&x.updated)||0)||0; }
 
-let remote = { v:1, votes:{}, checks:{}, updated:null };
-let syncOk = false;
-let syncBusy = false;
-let saveTimer = null;
+/* Convierte un documento v1 (por persona) a v2: por anuncio gana la entrada más reciente */
+function migrate(doc){
+  if(!doc || typeof doc!=='object') return emptyDoc();
+  if(doc.v===2) return {v:2, votes:doc.votes||{}, checks:doc.checks||{}, updated:doc.updated||null};
+  const out=emptyDoc();
+  Object.entries(doc.votes||{}).forEach(([id,people])=>{
+    let best=null;
+    Object.values(people||{}).forEach(e=>{ if(e && (!best || ts(e)>=ts(best))) best=e; });
+    if(best) out.votes[id]={vote:best.vote||'', stars:best.stars||0, comment:best.comment||'', updated:best.updated||null};
+  });
+  Object.entries(doc.checks||{}).forEach(([i,c])=>{
+    if(c && typeof c==='object') out.checks[i]={done:!!c.done, updated:c.updated||null};
+    else out.checks[i]={done:!!c, updated:null};
+  });
+  out.updated=doc.updated||null;
+  return out;
+}
+
+function loadLocal(){
+  try{
+    const v2=localStorage.getItem(STORE_KEY);
+    if(v2) return migrate(JSON.parse(v2));
+    const v1=localStorage.getItem(OLD_STORE_KEY);
+    if(v1) return migrate(JSON.parse(v1));
+  }catch(e){}
+  return emptyDoc();
+}
+function saveLocal(s){ try{ localStorage.setItem(STORE_KEY, JSON.stringify(s)); }catch(e){} }
+
+let remote = emptyDoc();
+let syncBusy = false, pendingPush = false, saveTimer = null, dirty = false;
 
 function toast(msg){
   const t=document.getElementById('toast');
@@ -239,37 +254,7 @@ function toast(msg){
 function setSync(status, text){
   const el=document.getElementById('sync-status');
   if(!el) return;
-  el.className='sync '+status;
-  el.textContent=text;
-}
-
-function currentWho(){
-  return (document.getElementById('who-sel')||{}).value || '';
-}
-function refreshWhoSelect(){
-  const sel=document.getElementById('who-sel');
-  const a=document.getElementById('name-a').value.trim();
-  const b=document.getElementById('name-b').value.trim();
-  const prev=sel.value;
-  sel.innerHTML='<option value="">— elige —</option>';
-  if(a) sel.innerHTML += '<option value="'+esc(a)+'">'+esc(a)+'</option>';
-  if(b) sel.innerHTML += '<option value="'+esc(b)+'">'+esc(b)+'</option>';
-  if(prev && (prev===a||prev===b)) sel.value=prev;
-  saveNames({a,b,who:sel.value});
-}
-function initNamesUI(){
-  const n=loadNames();
-  if(n.a) document.getElementById('name-a').value=n.a;
-  if(n.b) document.getElementById('name-b').value=n.b;
-  refreshWhoSelect();
-  if(n.who) document.getElementById('who-sel').value=n.who;
-  ['name-a','name-b'].forEach(id=>{
-    document.getElementById(id).addEventListener('change', ()=>{ refreshWhoSelect(); renderCards(); });
-    document.getElementById(id).addEventListener('blur', ()=>{ refreshWhoSelect(); renderCards(); });
-  });
-  document.getElementById('who-sel').addEventListener('change', ()=>{
-    const n2=loadNames(); n2.who=currentWho(); saveNames(n2); renderCards(); renderChecks();
-  });
+  el.className='sync '+status; el.textContent=text;
 }
 
 function petsTag(p){
@@ -282,46 +267,24 @@ function totalTag(lo,hi,label){
   return `<span class="tag ${over?'over':'price'}" title="${esc(label)}">2 meses: ${esc(label)}${over?' ⚠':''}</span>`;
 }
 function esc(s){ return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-
-function personEntries(listingId){
-  const block = (remote.votes&&remote.votes[listingId]) || {};
-  return Object.keys(block).sort().map(name=>({name, ...block[name]}));
-}
-function myEntry(listingId){
-  const who=currentWho();
-  if(!who) return {};
-  return ((remote.votes||{})[listingId]||{})[who] || {};
-}
+function entry(id){ return (remote.votes||{})[id] || {}; }
 function voteLabel(v){
   if(v==='like') return '❤️ Nos gusta';
   if(v==='maybe') return '🤔 Quizás';
   if(v==='no') return '✕ Descartar';
-  return '—';
+  return 'Sin votar';
 }
 
 function cardHTML(L){
-  const mine = myEntry(L.id);
-  const vote = mine.vote||'';
-  const stars = mine.stars||0;
-  const comment = mine.comment||'';
-  const others = personEntries(L.id);
-  const statusClass = vote?('status-'+vote):'';
-  const photo = L.img
-    ? `<img src="${L.img}" alt="" loading="lazy"/>`
-    : `<div class="ph">Sin foto</div>`;
+  const e = entry(L.id);
+  const vote=e.vote||'', stars=e.stars||0, comment=e.comment||'';
+  const photo = L.img ? `<img src="${L.img}" alt="" loading="lazy"/>` : `<div class="ph">Sin foto</div>`;
   const beds = L.beds!=null ? L.beds+' dorm.' : 'Dorm. ¿?';
   const tel = L.phone ? `<a class="btn-link" href="tel:${esc(L.phone)}">📞 ${esc(L.phone_disp||L.phone)}</a>` : '';
   const mail = L.email ? `<a class="btn-link" href="mailto:${esc(L.email)}">✉️ ${esc(L.email)}</a>` : '';
   let starBtns='';
   for(let i=1;i<=5;i++) starBtns += `<button type="button" data-star="${i}" class="${i<=stars?'on':''}" aria-label="${i} estrellas">★</button>`;
-  const who=currentWho();
-  const othersHtml = others.length ? `<div class="per-person">${others.map(o=>{
-    const me = o.name===who ? ' <span class="badge-me">tú</span>' : '';
-    const st = o.stars?(' ★'+o.stars):'';
-    const cm = o.comment?(` · <em>${esc(o.comment)}</em>`):'';
-    return `<div class="row"><span class="name">${esc(o.name)}${me}</span><span>${voteLabel(o.vote)}${st}${cm}</span></div>`;
-  }).join('')}</div>` : `<div class="per-person" style="color:var(--muted)">Aún sin votos compartidos</div>`;
-  return `<article class="card ${statusClass}" data-id="${L.id}" data-cat="${L.cat}" data-price="${L.price}" data-dist="${L.walk_t_n}" data-pets="${L.pets}">
+  return `<article class="card ${vote?'status-'+vote:''}" data-id="${L.id}">
     <div class="card-photo">${photo}</div>
     <div class="card-body">
       <h3>${esc(L.title)}</h3>
@@ -340,33 +303,15 @@ function cardHTML(L){
       </div>
       <div class="contact-row">${tel}${mail}<a class="btn-link" href="${esc(L.url)}" target="_blank" rel="noopener">🔗 Anuncio</a></div>
       <div class="notes">${esc(L.notes)}</div>
-      ${othersHtml}
       <div class="actions">
-        <button type="button" class="vote ${vote==='like'?'on-like':''}" data-vote="like" ${who?'':'disabled title="Elige quién eres"'}>❤️ Nos gusta</button>
-        <button type="button" class="vote ${vote==='maybe'?'on-maybe':''}" data-vote="maybe" ${who?'':'disabled title="Elige quién eres"'}>🤔 Quizás</button>
-        <button type="button" class="vote ${vote==='no'?'on-no':''}" data-vote="no" ${who?'':'disabled title="Elige quién eres"'}>✕ Descartar</button>
+        <button type="button" class="vote ${vote==='like'?'on-like':''}" data-vote="like">❤️ Nos gusta</button>
+        <button type="button" class="vote ${vote==='maybe'?'on-maybe':''}" data-vote="maybe">🤔 Quizás</button>
+        <button type="button" class="vote ${vote==='no'?'on-no':''}" data-vote="no">✕ Descartar</button>
       </div>
-      <div class="stars" data-role="stars">${starBtns}<span style="font-size:.7rem;color:var(--muted);margin-left:.35rem">tu valoración</span></div>
-      <textarea class="comments" placeholder="${who?'Tu comentario (se sincroniza)…':'Elige tu nombre arriba para comentar'}" data-role="comment" ${who?'':'disabled'}>${esc(comment)}</textarea>
+      <div class="stars">${starBtns}<span style="font-size:.7rem;color:var(--muted);margin-left:.35rem">valoración compartida</span></div>
+      <textarea class="comments" placeholder="Comentario compartido (se sincroniza)…" data-role="comment">${esc(comment)}</textarea>
     </div>
   </article>`;
-}
-
-function listingStatus(L){
-  const mine=myEntry(L.id).vote||'';
-  if(mine) return mine;
-  const ents=personEntries(L.id);
-  if(ents.some(e=>e.vote==='like')) return 'like';
-  if(ents.some(e=>e.vote==='maybe')) return 'maybe';
-  if(ents.length && ents.every(e=>e.vote==='no')) return 'no';
-  return '';
-}
-function listingStars(L){
-  const mine=myEntry(L.id).stars||0;
-  if(mine) return mine;
-  const ents=personEntries(L.id);
-  if(!ents.length) return 0;
-  return Math.max(...ents.map(e=>e.stars||0));
 }
 
 function getFilteredSorted(){
@@ -374,25 +319,21 @@ function getFilteredSorted(){
   const pets = document.getElementById('filter-pets').value;
   const sort = document.getElementById('sort-by').value;
   const q = (document.getElementById('q').value||'').toLowerCase().trim();
-  let list = LISTINGS.slice();
-  list = list.filter(L=>{
-    const st = listingStatus(L);
+  let list = LISTINGS.filter(L=>{
+    const st = entry(L.id).vote||'';
     if(status==='none' && st) return false;
     if(status!=='all' && status!=='none' && st!==status) return false;
     if(pets!=='all' && L.pets!==pets) return false;
-    if(q){
-      const hay = (L.title+' '+L.zone+' '+L.agency+' '+L.notes+' '+L.extras).toLowerCase();
-      if(!hay.includes(q)) return false;
-    }
+    if(q && !(L.title+' '+L.zone+' '+L.agency+' '+L.notes+' '+L.extras).toLowerCase().includes(q)) return false;
     return true;
   });
-  const orderStatus = {like:0,maybe:1,'':2,no:3};
+  const order = {like:0,maybe:1,'':2,no:3};
   list.sort((a,b)=>{
     if(sort==='price-asc') return a.price-b.price;
     if(sort==='price-desc') return b.price-a.price;
     if(sort==='dist') return a.walk_t_n-b.walk_t_n;
-    if(sort==='stars') return listingStars(b)-listingStars(a);
-    if(sort==='status') return (orderStatus[listingStatus(a)]??2)-(orderStatus[listingStatus(b)]??2);
+    if(sort==='stars') return (entry(b.id).stars||0)-(entry(a.id).stars||0);
+    if(sort==='status') return (order[entry(a.id).vote||'']??2)-(order[entry(b.id).vote||'']??2);
     return 0;
   });
   return list;
@@ -411,145 +352,102 @@ function renderCards(){
   bindCardEvents();
 }
 
-function ensurePersonSlot(listingId){
-  const who=currentWho();
-  if(!who){ toast('Elige «¿Quién eres?» arriba'); return null; }
-  if(!remote.votes) remote.votes={};
-  if(!remote.votes[listingId]) remote.votes[listingId]={};
-  if(!remote.votes[listingId][who]) remote.votes[listingId][who]={vote:'',stars:0,comment:'',updated:null};
-  return who;
+function touch(id){
+  if(!remote.votes[id]) remote.votes[id]={vote:'',stars:0,comment:'',updated:null};
+  remote.votes[id].updated=new Date().toISOString();
+  return remote.votes[id];
 }
-
-function schedulePush(){
-  saveLocal(remote);
-  clearTimeout(saveTimer);
-  saveTimer=setTimeout(pushRemote, 400);
+function schedulePush(delay){
+  dirty=true; saveLocal(remote);
+  clearTimeout(saveTimer); saveTimer=setTimeout(pushRemote, delay||400);
 }
 
 function bindCardEvents(){
   document.querySelectorAll('.card').forEach(card=>{
     const id = card.dataset.id;
     card.querySelectorAll('[data-vote]').forEach(btn=>{
-      btn.onclick=()=>{
-        const who=ensurePersonSlot(id); if(!who) return;
-        const v=btn.dataset.vote;
-        const cur=remote.votes[id][who];
-        cur.vote = cur.vote===v ? '' : v;
-        cur.updated = new Date().toISOString();
-        schedulePush(); renderCards();
-      };
+      btn.onclick=()=>{ const e=touch(id); e.vote = e.vote===btn.dataset.vote ? '' : btn.dataset.vote; schedulePush(); renderCards(); };
     });
     card.querySelectorAll('[data-star]').forEach(btn=>{
-      btn.onclick=()=>{
-        const who=ensurePersonSlot(id); if(!who) return;
-        const n=+btn.dataset.star;
-        const cur=remote.votes[id][who];
-        cur.stars = cur.stars===n ? 0 : n;
-        cur.updated = new Date().toISOString();
-        schedulePush(); renderCards();
-      };
+      btn.onclick=()=>{ const e=touch(id); const n=+btn.dataset.star; e.stars = e.stars===n ? 0 : n; schedulePush(); renderCards(); };
     });
     const ta=card.querySelector('[data-role=comment]');
-    if(ta){
-      ta.oninput=()=>{
-        const who=ensurePersonSlot(id); if(!who) return;
-        remote.votes[id][who].comment=ta.value;
-        remote.votes[id][who].updated=new Date().toISOString();
-        schedulePush();
-      };
-    }
+    if(ta) ta.oninput=()=>{ const e=touch(id); e.comment=ta.value; schedulePush(1200); };
   });
 }
 
-function mergeDocs(base, incoming){
-  const out = { v:1, votes:{}, checks:{}, updated:null };
-  const ids = new Set([...Object.keys(base.votes||{}), ...Object.keys(incoming.votes||{})]);
-  ids.forEach(id=>{
-    out.votes[id]={};
-    const names = new Set([...Object.keys((base.votes||{})[id]||{}), ...Object.keys((incoming.votes||{})[id]||{})]);
-    names.forEach(name=>{
-      const a=((base.votes||{})[id]||{})[name];
-      const b=((incoming.votes||{})[id]||{})[name];
-      if(!a) out.votes[id][name]=b;
-      else if(!b) out.votes[id][name]=a;
-      else {
-        const ta=Date.parse(a.updated||0)||0, tb=Date.parse(b.updated||0)||0;
-        out.votes[id][name]= tb>=ta ? b : a;
-      }
-    });
+/* Último en escribir gana, por anuncio y por tarea */
+function mergeDocs(a, b){
+  a=migrate(a); b=migrate(b);
+  const out=emptyDoc();
+  new Set([...Object.keys(a.votes),...Object.keys(b.votes)]).forEach(id=>{
+    const x=a.votes[id], y=b.votes[id];
+    out.votes[id] = !x ? y : !y ? x : (ts(y)>=ts(x) ? y : x);
   });
-  const cids = new Set([...Object.keys(base.checks||{}), ...Object.keys(incoming.checks||{})]);
-  cids.forEach(i=>{
-    const a=(base.checks||{})[i], b=(incoming.checks||{})[i];
-    if(!a) out.checks[i]=b;
-    else if(!b) out.checks[i]=a;
-    else {
-      const ta=Date.parse(a.updated||0)||0, tb=Date.parse(b.updated||0)||0;
-      out.checks[i]= tb>=ta ? b : a;
-    }
+  new Set([...Object.keys(a.checks),...Object.keys(b.checks)]).forEach(i=>{
+    const x=a.checks[i], y=b.checks[i];
+    out.checks[i] = !x ? y : !y ? x : (ts(y)>=ts(x) ? y : x);
   });
-  const ta=Date.parse(base.updated||0)||0, tb=Date.parse(incoming.updated||0)||0;
-  out.updated = tb>=ta ? incoming.updated : base.updated;
+  out.updated = (Date.parse(b.updated||0)||0) >= (Date.parse(a.updated||0)||0) ? b.updated : a.updated;
   return out;
 }
 
+async function fetchServer(){
+  const r = await fetch(MANTLE_URL, {cache:'no-store', headers:{'X-Mantle-Key':MANTLE_KEY}});
+  if(r.status===404) return emptyDoc();
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  const d = await r.json();
+  if(!d || typeof d!=='object' || d.error) throw new Error('respuesta inválida');
+  return migrate(d);
+}
+
+function rerenderIfIdle(){
+  const f=document.activeElement;
+  if(f && f.matches && f.matches('textarea.comments')) return; // no interrumpir mientras se escribe
+  renderCards(); renderChecks();
+}
+
 async function pullRemote(){
+  if(syncBusy) return;
   try{
-    const r = await fetch(MANTLE_URL, {cache:'no-store', headers:{'X-Mantle-Key':MANTLE_KEY}});
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    const data = await r.json();
-    if(data && typeof data==='object' && !data.error){
-      remote = mergeDocs(remote, data);
-      saveLocal(remote);
-      syncOk=true;
-      setSync('ok', 'Nube OK · '+new Date().toLocaleTimeString('es-ES'));
-      renderCards(); renderChecks();
-      return true;
-    }
-    throw new Error('respuesta inválida');
+    const server = await fetchServer();
+    const before = JSON.stringify(remote);
+    remote = mergeDocs(remote, server);
+    saveLocal(remote);
+    setSync('ok', 'Nube OK · '+new Date().toLocaleTimeString('es-ES'));
+    if(JSON.stringify(remote)!==before) rerenderIfIdle();
+    if(dirty) schedulePush();
   }catch(e){
-    syncOk=false;
-    setSync('err', 'Sin nube · usando local');
-    return false;
+    setSync('err', 'Sin conexión · usando datos locales');
   }
 }
 
 async function pushRemote(){
-  if(syncBusy) return;
-  syncBusy=true;
-  setSync('wait', 'Guardando…');
+  if(syncBusy){ pendingPush=true; return; }
+  syncBusy=true; setSync('wait','Guardando…');
   try{
-    let server={v:1,votes:{},checks:{},updated:null};
-    try{
-      const r=await fetch(MANTLE_URL,{cache:'no-store', headers:{'X-Mantle-Key':MANTLE_KEY}});
-      if(r.ok){ const d=await r.json(); if(d&&typeof d==='object'&&!d.error) server=d; }
-    }catch(_){}
+    let server = emptyDoc();
+    try{ server = await fetchServer(); }catch(_){}
     remote = mergeDocs(server, remote);
     remote.updated = new Date().toISOString();
-    remote.v = 1;
-    const r2 = await fetch(MANTLE_URL, {
-      method:'POST',
-      headers:{'Content-Type':'application/json','X-Mantle-Key':MANTLE_KEY},
-      body: JSON.stringify(remote)
-    });
-    if(!r2.ok) throw new Error('HTTP '+r2.status);
-    saveLocal(remote);
-    syncOk=true;
-    setSync('ok', 'Guardado · '+new Date().toLocaleTimeString('es-ES'));
-    renderCards(); renderChecks();
+    const r = await fetch(MANTLE_URL, {method:'POST', headers:{'Content-Type':'application/json','X-Mantle-Key':MANTLE_KEY}, body: JSON.stringify(remote)});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    dirty=false; saveLocal(remote);
+    setSync('ok','Guardado · '+new Date().toLocaleTimeString('es-ES'));
+    rerenderIfIdle();
   }catch(e){
     saveLocal(remote);
-    setSync('err', 'No se pudo guardar · local OK');
+    setSync('err','No se pudo guardar · se reintentará');
   }finally{
     syncBusy=false;
+    if(pendingPush){ pendingPush=false; pushRemote(); }
   }
 }
 
 function renderAgencies(){
   const tb=document.querySelector('#ag-table tbody');
   tb.innerHTML = AGENCIES.map(a=>{
-    const telClean = a[2] ? a[2].replace(/\s/g,'') : '';
-    const telHtml = a[2] ? `<a href="tel:${esc(telClean)}">${esc(a[2])}</a>` : '—';
+    const telHtml = a[2] ? `<a href="tel:${esc(a[2].split('/')[0].replace(/\s/g,''))}">${esc(a[2])}</a>` : '—';
     const mail = a[3] ? `<a href="mailto:${esc(a[3])}">${esc(a[3])}</a>` : '—';
     const web = a[4] ? `<a href="${esc(a[4])}" target="_blank" rel="noopener">Web</a>` : '—';
     return `<tr><td><strong>${esc(a[0])}</strong></td><td>${esc(a[1])}</td><td>${telHtml}</td><td>${mail}</td><td>${web}</td></tr>`;
@@ -558,53 +456,41 @@ function renderAgencies(){
 
 function renderChecks(){
   const ul=document.getElementById('check-list');
-  const who=currentWho();
   ul.innerHTML = PENDIENTES.map((t,i)=>{
-    const c=(remote.checks||{})[i]||{};
-    const done=!!c.done;
-    const by=c.by?` <span style="color:var(--muted);font-size:.75rem">(${esc(c.by)})</span>`:'';
-    return `<li class="${done?'done':''}"><input type="checkbox" data-ci="${i}" ${done?'checked':''} ${who?'':'disabled'}/><span>${esc(t)}${by}</span></li>`;
+    const done=!!((remote.checks||{})[i]||{}).done;
+    return `<li class="${done?'done':''}"><input type="checkbox" data-ci="${i}" ${done?'checked':''}/><span>${esc(t)}</span></li>`;
   }).join('');
   ul.querySelectorAll('input').forEach(inp=>{
-    inp.onchange=()=>{
-      const who2=currentWho();
-      if(!who2){ toast('Elige «¿Quién eres?»'); inp.checked=!inp.checked; return; }
-      if(!remote.checks) remote.checks={};
-      remote.checks[inp.dataset.ci]={done:inp.checked, by:who2, updated:new Date().toISOString()};
-      schedulePush(); renderChecks();
-    };
+    inp.onchange=()=>{ remote.checks[inp.dataset.ci]={done:inp.checked, updated:new Date().toISOString()}; schedulePush(); renderChecks(); };
   });
 }
 
 function tickCountdown(){
-  const now=new Date();
-  let ms=TARGET-now;
-  if(ms<0){ document.getElementById('cd-d').textContent='0'; document.getElementById('cd-h').textContent='0'; document.getElementById('cd-m').textContent='0'; return; }
+  let ms=TARGET-new Date();
+  if(ms<0) ms=0;
   const d=Math.floor(ms/86400000); ms%=86400000;
   const h=Math.floor(ms/3600000); ms%=3600000;
-  const m=Math.floor(ms/60000);
   document.getElementById('cd-d').textContent=d;
   document.getElementById('cd-h').textContent=h;
-  document.getElementById('cd-m').textContent=m;
+  document.getElementById('cd-m').textContent=Math.floor(ms/60000);
 }
 
 function exportDecisions(){
-  const lines=['=== Decisiones alquiler Jerez (1 nov 2026 – 1 ene 2027) ===','Exportado: '+new Date().toLocaleString('es-ES'),'Fuente: compartida (MantleDB) + local',''];
-  LISTINGS.forEach(L=>{
-    const ents=personEntries(L.id);
-    if(!ents.length) return;
-    lines.push('## '+L.title+' | '+L.price+' €/mes');
-    lines.push(L.url);
-    ents.forEach(o=>{
-      lines.push(`- ${o.name}: ${voteLabel(o.vote)} ★${o.stars||0}/5${o.comment?(' — '+o.comment):''}`);
+  const lines=['=== Decisiones alquiler Jerez (1 nov 2026 – 1 ene 2027) ===','Exportado: '+new Date().toLocaleString('es-ES'),''];
+  const groups=[['like','NOS GUSTA'],['maybe','QUIZÁS'],['no','DESCARTAR'],['','SIN VOTAR']];
+  groups.forEach(([v,label])=>{
+    const items=LISTINGS.filter(L=>(entry(L.id).vote||'')===v);
+    lines.push('## '+label+' ('+items.length+')');
+    if(!items.length) lines.push('(ninguno)');
+    items.forEach(L=>{
+      const e=entry(L.id);
+      lines.push(`- [${L.id}] ${L.title} | ${L.price} €/mes | ★${e.stars||0}/5${v===''?'':' | '+L.url}`);
+      if(e.comment) lines.push('  Comentario: '+e.comment);
     });
     lines.push('');
   });
   lines.push('## Pendientes');
-  PENDIENTES.forEach((t,i)=>{
-    const c=(remote.checks||{})[i]||{};
-    lines.push(`[${c.done?'x':' '}] ${t}${c.by?(' ('+c.by+')'):''}`);
-  });
+  PENDIENTES.forEach((t,i)=>lines.push(`[${((remote.checks||{})[i]||{}).done?'x':' '}] ${t}`));
   const text=lines.join('\n');
   if(navigator.clipboard && navigator.clipboard.writeText){
     navigator.clipboard.writeText(text).then(()=>toast('Resumen copiado al portapapeles')).catch(()=>fallbackCopy(text));
@@ -612,8 +498,7 @@ function exportDecisions(){
 }
 function fallbackCopy(text){
   const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select();
-  try{ document.execCommand('copy'); toast('Resumen copiado al portapapeles'); }
-  catch(e){ toast('No se pudo copiar'); console.log(text); }
+  try{ document.execCommand('copy'); toast('Resumen copiado al portapapeles'); }catch(e){ toast('No se pudo copiar'); }
   document.body.removeChild(ta);
 }
 
@@ -634,8 +519,8 @@ document.querySelectorAll('.tab').forEach(tab=>{
 });
 document.getElementById('btn-export').onclick=exportDecisions;
 document.getElementById('btn-reset').onclick=()=>{
-  if(confirm('¿Borrar SOLO la caché de este dispositivo? (la nube no se borra; al recargar volverán los datos compartidos)')){
-    localStorage.removeItem(STORE_KEY); remote={v:1,votes:{},checks:{},updated:null}; renderCards(); renderChecks(); toast('Caché local borrada'); pullRemote();
+  if(confirm('¿Borrar SOLO la caché de este dispositivo? (la nube no se borra)')){
+    localStorage.removeItem(STORE_KEY); localStorage.removeItem(OLD_STORE_KEY); remote=emptyDoc(); dirty=false; renderCards(); renderChecks(); toast('Caché local borrada'); pullRemote();
   }
 }
 
@@ -674,9 +559,7 @@ function initMap(){
 })();
 
 tickCountdown(); setInterval(tickCountdown,30000);
-initNamesUI();
-const cached = loadLocal();
-if(cached && cached.votes) remote = mergeDocs(remote, cached);
+remote = loadLocal();
 renderCards(); renderAgencies(); renderChecks();
 pullRemote();
 setInterval(pullRemote, POLL_MS);
